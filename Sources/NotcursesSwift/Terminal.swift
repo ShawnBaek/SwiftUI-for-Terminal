@@ -5,6 +5,15 @@ import Darwin
 import Glibc
 #endif
 
+/// Notcurses initialization flags.
+public struct TerminalOptions: OptionSet, Sendable {
+    public let rawValue: UInt64
+    public init(rawValue: UInt64) { self.rawValue = rawValue }
+
+    public static let noAlternateScreen = TerminalOptions(rawValue: UInt64(NCOPTION_NO_ALTERNATE_SCREEN))
+    public static let suppressBanners   = TerminalOptions(rawValue: UInt64(NCOPTION_SUPPRESS_BANNERS))
+}
+
 /// Safe Swift wrapper around the notcurses terminal library.
 public final class Terminal {
     let nc: OpaquePointer

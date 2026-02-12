@@ -1,9 +1,4 @@
 import NotcursesSwift
-#if canImport(Darwin)
-import Darwin
-#elseif canImport(Glibc)
-import Glibc
-#endif
 import Foundation
 
 /// The main application run loop that drives the terminal UI.
@@ -23,7 +18,7 @@ public final class Application {
 
     /// Run an application with the given root view.
     public func run<V: View>(_ rootView: V) throws {
-        let terminal = try Terminal()
+        let terminal = try Terminal(flags: TerminalOptions.suppressBanners.rawValue)
         self.terminal = terminal
 
         let plane = terminal.standardPlane

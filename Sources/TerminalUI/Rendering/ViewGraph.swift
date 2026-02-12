@@ -32,10 +32,16 @@ internal struct ViewGraph {
         return control
     }
 
+    // MARK: - Existential opening helper
+
+    /// Open an `any View` existential and call `buildControl` with the concrete type.
+    private static func openAndBuildControl(_ view: some View, node: Node) -> Control {
+        return buildControl(from: view, node: node)
+    }
+
     // MARK: - Composite view handling
 
     private static func buildCompositeControl<V: View>(from view: V, control: Control, node: Node) {
-        // Check for layout containers first via type name (avoids opening existential)
         let typeName = String(describing: type(of: view))
 
         if typeName.hasPrefix("VStack") {
@@ -48,6 +54,10 @@ internal struct ViewGraph {
             buildModifiedControl(from: view, control: control, node: node)
         } else if typeName.hasPrefix("TupleView") {
             buildTupleViewControl(from: view, control: control, node: node)
+        } else if typeName.hasPrefix("ConditionalContent") {
+            buildConditionalControl(from: view, control: control, node: node)
+        } else if typeName.hasPrefix("Optional") {
+            buildOptionalControl(from: view, control: control, node: node)
         } else {
             // User-defined composite view — evaluate its body
             let childNode = Node(viewType: V.Body.self)
@@ -108,14 +118,8 @@ internal struct ViewGraph {
                 let height = modMirror.descendant("height") as? CGFloat?
                 let alignment = modMirror.descendant("alignment") as? Alignment ?? .center
                 control.kind = .frame(width: width ?? nil, height: height ?? nil, alignment: alignment)
-            } else if modType == "ForegroundColorModifier" || modType == "ForegroundStyleModifier" {
-                // Pass-through: foreground color is applied at the Text level
-                control.kind = .container
-            } else if modType == "BackgroundModifier" {
-                control.kind = .container
-            } else if modType == "BoldModifier" || modType == "FontModifier" {
-                control.kind = .container
             } else {
+                // ForegroundColor, Background, Bold, Font — pass-through containers
                 control.kind = .container
             }
         } else {
@@ -139,55 +143,69 @@ internal struct ViewGraph {
         }
     }
 
-    // MARK: - Child content helpers
-
-    private static func buildChildrenFromContent(_ content: Any, into parentControl: Control, node: Node) {
-        if let view = content as? Text {
-            let childNode = Node(viewType: Text.self)
-            node.addChild(childNode)
-            childNode.application = node.application
-            let childControl = buildControl(from: view, node: childNode)
-            parentControl.addChild(childControl)
-        } else if let view = content as? EmptyView {
-            let childNode = Node(viewType: EmptyView.self)
-            node.addChild(childNode)
-            childNode.application = node.application
-            let childControl = buildControl(from: view, node: childNode)
-            parentControl.addChild(childControl)
-        } else if let view = content as? Spacer {
-            let childNode = Node(viewType: Spacer.self)
-            node.addChild(childNode)
-            childNode.application = node.application
-            let childControl = buildControl(from: view, node: childNode)
-            parentControl.addChild(childControl)
-        } else {
-            // Try to use Mirror for TupleView content and other composites
-            let mirror = Mirror(reflecting: content)
-            let typeName = String(describing: type(of: content))
-
-            if typeName.hasPrefix("TupleView") {
-                if let value = mirror.descendant("value") {
-                    let valueMirror = Mirror(reflecting: value)
-                    for child in valueMirror.children {
-                        buildChildrenFromContent(child.value, into: parentControl, node: node)
-                    }
-                }
-            } else if mirror.children.isEmpty {
-                // Leaf node we don't recognize — skip
-            } else {
-                // Try to treat it as a generic view through existential
-                let childNode = Node(viewType: type(of: content))
+    private static func buildConditionalControl<V: View>(from view: V, control: Control, node: Node) {
+        control.kind = .container
+        let mirror = Mirror(reflecting: view)
+        // ConditionalContent is an enum — extract the associated value
+        for child in mirror.children {
+            if let anyView = child.value as? any View {
+                let childNode = Node(viewType: type(of: anyView))
                 node.addChild(childNode)
                 childNode.application = node.application
-                let childControl = Control()
-                childControl.kind = .container
-                childControl.node = childNode
+                let childControl = openAndBuildControl(anyView, node: childNode)
+                control.addChild(childControl)
+            }
+        }
+    }
 
-                // Check if it has a body we can evaluate via Mirror
-                if let bodyValue = mirror.descendant("body") {
-                    buildChildrenFromContent(bodyValue, into: childControl, node: childNode)
+    private static func buildOptionalControl<V: View>(from view: V, control: Control, node: Node) {
+        control.kind = .container
+        let mirror = Mirror(reflecting: view)
+        for child in mirror.children {
+            if let anyView = child.value as? any View {
+                let childNode = Node(viewType: type(of: anyView))
+                node.addChild(childNode)
+                childNode.application = node.application
+                let childControl = openAndBuildControl(anyView, node: childNode)
+                control.addChild(childControl)
+            }
+        }
+    }
+
+    // MARK: - Child content helpers
+
+    /// Resolve `Any` content (from Mirror reflection) into Control children.
+    /// Uses existential opening via `any View` cast to handle all View types generically.
+    private static func buildChildrenFromContent(_ content: Any, into parentControl: Control, node: Node) {
+        let typeName = String(describing: type(of: content))
+
+        // TupleView: decompose its value tuple into individual children (don't wrap as single child)
+        if typeName.hasPrefix("TupleView") {
+            let mirror = Mirror(reflecting: content)
+            if let value = mirror.descendant("value") {
+                let valueMirror = Mirror(reflecting: value)
+                for child in valueMirror.children {
+                    buildChildrenFromContent(child.value, into: parentControl, node: node)
                 }
-                parentControl.addChild(childControl)
+            }
+            return
+        }
+
+        // All other View types: open existential and build recursively
+        if let anyView = content as? any View {
+            let childNode = Node(viewType: type(of: anyView))
+            node.addChild(childNode)
+            childNode.application = node.application
+            let childControl = openAndBuildControl(anyView, node: childNode)
+            parentControl.addChild(childControl)
+            return
+        }
+
+        // Raw tuple (from Mirror of a tuple, not a TupleView) — decompose children
+        let mirror = Mirror(reflecting: content)
+        if mirror.displayStyle == .tuple {
+            for child in mirror.children {
+                buildChildrenFromContent(child.value, into: parentControl, node: node)
             }
         }
     }
