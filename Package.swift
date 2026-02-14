@@ -13,14 +13,11 @@ let package = Package(
         .executable(name: "Example", targets: ["Example"]),
     ],
     targets: [
-        // Layer 1: C system library
-        .systemLibrary(
+        // Layer 1: Vendored C implementation (no external dependencies)
+        .target(
             name: "Cnotcurses",
-            pkgConfig: "notcurses",
-            providers: [
-                .brew(["notcurses"]),
-                .apt(["libnotcurses-dev"]),
-            ]
+            publicHeadersPath: "include",
+            cSettings: [.headerSearchPath("src")]
         ),
 
         // Layer 2: Safe Swift wrapper

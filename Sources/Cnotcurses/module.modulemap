@@ -1,5 +1,0 @@
-module Cnotcurses {
-    header "shim.h"
-    link "notcurses-core"
-    export *
-}
