@@ -19,6 +19,11 @@ internal class Control {
     func sizeThatFits(_ proposed: ProposedSize) -> Size {
         switch kind {
         case .container:
+            // Propagate layout to children so their positions get computed
+            for child in children {
+                let childSize = child.sizeThatFits(proposed)
+                child.size = childSize
+            }
             return Size(width: proposed.width ?? 0, height: proposed.height ?? 0)
         case .text(let content, _, _, _):
             return Size(width: content.count, height: 1)
